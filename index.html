@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smartventory</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    html.dark {
+      --bg: #1e1e2f;
+      --text: #f5f5f5;
+      --card: #2e2e3e;
+      --accent: #4f46e5;
+    }
+    html.light {
+      --bg: #f9fafb;
+      --text: #111827;
+      --card: #ffffff;
+      --accent: #2563eb;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+    }
+    .card {
+      background-color: var(--card);
+      color: var(--text);
+    }
+    .accent {
+      background-color: var(--accent);
+    }
+    input, select, textarea {
+      background-color: inherit;
+      color: inherit;
+    }
+    #pdfBill *:not(.exclude-from-pdf) {
+      color: #000 !important;
+    }
+  </style>
+</head>
+<body class="min-h-screen transition-colors duration-300">
+  <div class="max-w-4xl mx-auto p-4">
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-bold">Smartventory</h1>
+      <div>
+        <button onclick="startVoiceAssistant()" class="accent text-white px-3 py-1 rounded shadow mr-2">Voice Assist</button>
+        <button onclick="toggleTheme()" class="accent text-white px-3 py-1 rounded shadow">Toggle Theme</button>
+      </div>
+    </div>
+
+    <!-- Add Item -->
+    <div class="card p-4 rounded-lg shadow mb-6">
+      <h2 class="text-xl font-semibold mb-3">Add New Item</h2>
+      <div class="grid sm:grid-cols-4 gap-3">
+        <input type="text" id="itemName" placeholder="Item Name" class="p-2 rounded border w-full" />
+        <input type="number" id="itemCost" placeholder="Cost Price" class="p-2 rounded border w-full" />
+        <input type="number" id="itemQty" placeholder="Quantity" class="p-2 rounded border w-full" />
+        <button onclick="addItem()" class="accent text-white rounded px-4 py-2 hover:opacity-90">Add</button>
+      </div>
+    </div>
+
+    <!-- Billing -->
+    <div class="card p-4 rounded-lg shadow">
+      <form id="printBillForm">
+        <div class="overflow-x-auto">
+          <table class="w-full mb-4">
+            <thead>
+              <tr class="text-left border-b">
+                <th>Select</th><th>Item</th><th>Cost</th><th>Available</th><th>Sell Qty</th><th>Selling Price</th>
+              </tr>
+            </thead>
+            <tbody id="itemList" class="text-sm"></tbody>
+          </table>
+        </div>
+        <button type="submit" class="accent text-white px-4 py-2 rounded hover:opacity-90">Print Bill</button>
+      </form>
+
+      <!-- Bill Output -->
+      <div id="billOutput" class="hidden mt-6 card p-4 rounded-lg shadow">
+        <div id="pdfBill" class="bg-white text-black p-4 rounded-lg">
+          <h2 class="text-xl font-semibold mb-4">Bill Summary</h2>
+          <ul id="billItems" class="list-disc pl-5 text-sm mb-4"></ul>
+          <div class="grid sm:grid-cols-2 gap-4 text-sm">
+            <p class="bg-gray-100 p-3 rounded">Subtotal: <span id="totalAmount" class="font-semibold"></span></p>
+            <p class="bg-gray-100 p-3 rounded">CGST (9%): <span id="cgstAmount"></span></p>
+            <p class="bg-gray-100 p-3 rounded">SGST (9%): <span id="sgstAmount"></span></p>
+            <p class="bg-blue-100 p-3 rounded font-semibold">Final Total: <span id="finalAmount"></span></p>
+          </div>
+        </div>
+        <button onclick="downloadPDF()" class="mt-4 accent text-white px-4 py-2 rounded hover:opacity-90 exclude-from-pdf">Download PDF</button>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="mt-10">
+      <h2 class="text-2xl font-bold mb-4">Bill History</h2>
+      <div id="historyList" class="grid gap-4 sm:grid-cols-2"></div>
+    </div>
+  </div>
+
+  <script>
+    let inventory = [];
+
+    function toggleTheme() {
+      document.documentElement.classList.toggle('dark');
+      document.documentElement.classList.toggle('light');
+    }
+
+    function addItem() {
+      const name = itemName.value.trim();
+      const cost = parseFloat(itemCost.value);
+      const qty = parseInt(itemQty.value);
+      if (!name || isNaN(cost) || isNaN(qty) || cost <= 0 || qty <= 0) return alert("Enter valid item details.");
+      const id = Date.now();
+      inventory.push({ id, name, cost, quantity: qty });
+      itemName.value = itemCost.value = itemQty.value = "";
+      renderItems();
+    }
+
+    function renderItems() {
+      itemList.innerHTML = "";
+      inventory.forEach(item => {
+        itemList.innerHTML += `
+        <tr class="border-b">
+          <td><input type="checkbox" class="selectItem" value="${item.id}"></td>
+          <td>${item.name}</td>
+          <td>₹${item.cost}</td>
+          <td>${item.quantity}</td>
+          <td><input type="number" class="sellQty border px-2 py-1 rounded w-20" data-id="${item.id}" min="1" max="${item.quantity}" value="1"></td>
+          <td><input type="number" class="sellPrice border px-2 py-1 rounded w-24" data-id="${item.id}" placeholder="₹"></td>
+        </tr>`;
+      });
+    }
+
+    printBillForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      const selectedIds = Array.from(document.querySelectorAll('.selectItem:checked')).map(el => parseInt(el.value));
+      const selectedItems = [];
+      let total = 0;
+
+      selectedIds.forEach(id => {
+        const qtyInput = document.querySelector(`.sellQty[data-id="${id}"]`);
+        const priceInput = document.querySelector(`.sellPrice[data-id="${id}"]`);
+        const sellQty = parseInt(qtyInput.value);
+        const sellPrice = parseFloat(priceInput.value);
+        const item = inventory.find(i => i.id === id);
+        if (sellQty > 0 && sellQty <= item.quantity && sellPrice > 0) {
+          selectedItems.push({ ...item, sellQty, sellPrice });
+          total += sellPrice * sellQty;
+          item.quantity -= sellQty;
+        }
+      });
+
+      const cgst = total * 0.09;
+      const sgst = total * 0.09;
+      const finalTotal = total + cgst + sgst;
+
+      billItems.innerHTML = selectedItems.map(i => `<li>${i.name} - ₹${i.sellPrice} × ${i.sellQty}</li>`).join("");
+      totalAmount.textContent = `₹${total.toFixed(2)}`;
+      cgstAmount.textContent = `₹${cgst.toFixed(2)}`;
+      sgstAmount.textContent = `₹${sgst.toFixed(2)}`;
+      finalAmount.textContent = `₹${finalTotal.toFixed(2)}`;
+      billOutput.classList.remove("hidden");
+
+      inventory = inventory.filter(i => i.quantity > 0);
+      renderItems();
+
+      const bill = {
+        id: Date.now(),
+        date: new Date().toLocaleString(),
+        items: selectedItems,
+        total,
+        cgst,
+        sgst,
+        finalTotal
+      };
+      saveBillToHistory(bill);
+    });
+
+    function saveBillToHistory(bill) {
+      const history = JSON.parse(localStorage.getItem("billHistory") || "[]");
+      history.unshift(bill);
+      localStorage.setItem("billHistory", JSON.stringify(history));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const history = JSON.parse(localStorage.getItem("billHistory") || "[]");
+      historyList.innerHTML = history.map(bill => `
+        <div class="card p-4 rounded shadow text-sm">
+          <h3 class="font-semibold text-lg mb-2">Bill ID: ${bill.id}</h3>
+          <p>Date: ${bill.date}</p>
+          <p>Total: ₹${bill.total.toFixed(2)}</p>
+          <p>CGST: ₹${bill.cgst.toFixed(2)}, SGST: ₹${bill.sgst.toFixed(2)}</p>
+          <p class="font-semibold">Final: ₹${bill.finalTotal.toFixed(2)}</p>
+        </div>
+      `).join("");
+    }
+
+    function downloadPDF() {
+      const element = document.getElementById("pdfBill");
+      html2pdf().from(element).save(`Smartventory_Bill_${Date.now()}.pdf`);
+    }
+
+    function startVoiceAssistant() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'en-IN';
+      recognition.start();
+      recognition.onresult = function (event) {
+        const command = event.results[0][0].transcript.toLowerCase();
+        if (command.includes("add item")) {
+          alert("Say item details manually or type them in.");
+        } else if (command.includes("dark mode")) {
+          document.documentElement.classList.add('dark');
+          document.documentElement.classList.remove('light');
+        } else if (command.includes("light mode")) {
+          document.documentElement.classList.add('light');
+          document.documentElement.classList.remove('dark');
+        } else if (command.includes("download bill")) {
+          downloadPDF();
+        } else {
+          alert("Command not recognized: " + command);
+        }
+      };
+    }
+
+    renderItems();
+    renderHistory();
+  </script>
+</body>
+</html>
